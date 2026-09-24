@@ -14,7 +14,7 @@
   <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 text-center">
     <!-- โปรไฟล์พนักงาน -->
     <div id="profile-section" class="mb-6">
-      <img id="user-avatar" class="w-20 h-20 rounded-full mx-auto mb-3 shadow" src="https://via.placeholder.com/80" alt="Avatar">
+      <img id="user-avatar" class="w-20 h-20 rounded-full mx-auto mb-3 shadow object-cover" src="https://via.placeholder.com/80" alt="Avatar">
       <h2 id="user-name" class="text-xl font-bold text-gray-800">กำลังโหลดข้อมูล...</h2>
       <p id="user-status" class="text-xs text-gray-500 mt-1">กรุณารอสักครู่</p>
     </div>
@@ -34,21 +34,32 @@
   </div>
 
   <script>
-    // ⚠️ ใส่ข้อมูลของคุณที่นี่ ⚠️
-    const LIFF_ID = "2011734616-iX8k105V"; // ได้จาก Step 2
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyBPYGNYSEEGkAGhIAzLBHXsEukhJR8QRfphmuR9pVdiOgt3V909tbePSuMuSFlCLUHJw/exec"; // Web App URL จาก Apps Script
+    const LIFF_ID = "2011734616-iX8k105V";
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyBPYGNYSEEGkAGhIAzLBHXsEukhJR8QRfphmuR9pVdiOgt3V909tbePSuMuSFlCLUHJw/exec";
 
     let userProfile = null;
 
     async function main() {
-      await liff.init({ liffId: LIFF_ID });
-      if (!liff.isLoggedIn()) {
-        liff.login();
-      } else {
-        userProfile = await liff.getProfile();
-        document.getElementById('user-avatar').src = userProfile.pictureUrl;
-        document.getElementById('user-name').innerText = userProfile.displayName;
-        document.getElementById('user-status').innerText = "พร้อมลงเวลาทำงาน";
+      const nameEl = document.getElementById('user-name');
+      const statusEl = document.getElementById('user-status');
+      const avatarEl = document.getElementById('user-avatar');
+
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) {
+          liff.login();
+        } else {
+          userProfile = await liff.getProfile();
+          avatarEl.src = userProfile.pictureUrl || 'https://via.placeholder.com/80';
+          nameEl.innerText = userProfile.displayName;
+          statusEl.innerText = "พร้อมลงเวลาทำงาน";
+          statusEl.className = "text-xs text-emerald-600 mt-1 font-semibold";
+        }
+      } catch (err) {
+        console.error("LIFF Init Error:", err);
+        nameEl.innerText = "เกิดข้อผิดพลาดในการโหลด";
+        statusEl.innerText = "กรุณาเปิดลิงก์นี้ผ่านแอป LINE เท่านั้น";
+        statusEl.className = "text-xs text-rose-500 mt-1 font-bold";
       }
     }
     main();
@@ -58,6 +69,11 @@
       resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-yellow-100 text-yellow-800";
       resultBox.innerText = "กำลังตรวจสอบพิกัด GPS...";
       resultBox.classList.remove('hidden');
+
+      if (!userProfile) {
+        alert("ไม่พบข้อมูลผู้ใช้ กรุณาลองใหม่อีกครั้ง");
+        return;
+      }
 
       if (!navigator.geolocation) {
         alert("อุปกรณ์ของคุณไม่รองรับ GPS");
@@ -74,8 +90,10 @@
         };
 
         try {
+          // ใช้ mode: 'no-cors' หรือส่งผ่าน fetch แบบ text/plain เพื่อป้องกัน CORS
           const res = await fetch(GAS_WEB_APP_URL, {
             method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
             body: JSON.stringify(payload)
           });
           const data = await res.json();
@@ -91,13 +109,14 @@
             setTimeout(() => { liff.closeWindow(); }, 3000);
           }
         } catch (err) {
+          console.error("Submit Error:", err);
           resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
           resultBox.innerText = "❌ เกิดข้อผิดพลาดในการส่งข้อมูล";
         }
       }, (err) => {
         resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
         resultBox.innerText = "❌ กรุณาเปิด Location Service (GPS) บนมือถือ";
-      }, { enableHighAccuracy: true });
+      }, { enableHighAccuracy: true, timeout: 10000 });
     }
   </script>
 </body>
