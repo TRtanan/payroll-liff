@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบตอกบัตรพนักงาน</title>
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
+
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 text-center">
+    <!-- โปรไฟล์พนักงาน -->
+    <div id="profile-section" class="mb-6">
+      <img id="user-avatar" class="w-20 h-20 rounded-full mx-auto mb-3 shadow" src="https://via.placeholder.com/80" alt="Avatar">
+      <h2 id="user-name" class="text-xl font-bold text-gray-800">กำลังโหลดข้อมูล...</h2>
+      <p id="user-status" class="text-xs text-gray-500 mt-1">กรุณารอสักครู่</p>
+    </div>
+
+    <!-- ปุ่มตอกบัตร -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <button onclick="clockIn('เข้างาน')" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">
+        ☀️ เข้างาน
+      </button>
+      <button onclick="clockIn('ออกงาน')" class="bg-rose-500 hover:bg-rose-600 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">
+        🌙 ออกงาน
+      </button>
+    </div>
+
+    <!-- กล่องแสดงข้อความผลลัพธ์ -->
+    <div id="result-box" class="hidden p-3 rounded-lg text-sm font-medium mt-4"></div>
+  </div>
+
+  <script>
+    // ⚠️ ใส่ข้อมูลของคุณที่นี่ ⚠️
+    const LIFF_ID = "YOUR_LIFF_ID"; // ได้จาก Step 2
+    const GAS_WEB_APP_URL = "YOUR_GOOGLE_APPS_SCRIPT_URL"; // Web App URL จาก Apps Script
+
+    let userProfile = null;
+
+    async function main() {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) {
+        liff.login();
+      } else {
+        userProfile = await liff.getProfile();
+        document.getElementById('user-avatar').src = userProfile.pictureUrl;
+        document.getElementById('user-name').innerText = userProfile.displayName;
+        document.getElementById('user-status').innerText = "พร้อมลงเวลาทำงาน";
+      }
+    }
+    main();
+
+    function clockIn(actionType) {
+      const resultBox = document.getElementById('result-box');
+      resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-yellow-100 text-yellow-800";
+      resultBox.innerText = "กำลังตรวจสอบพิกัด GPS...";
+      resultBox.classList.remove('hidden');
+
+      if (!navigator.geolocation) {
+        alert("อุปกรณ์ของคุณไม่รองรับ GPS");
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(async (position) => {
+        const payload = {
+          userId: userProfile.userId,
+          displayName: userProfile.displayName,
+          actionType: actionType,
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        };
+
+        try {
+          const res = await fetch(GAS_WEB_APP_URL, {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+
+          if (data.status === "success") {
+            if (data.isWithinArea === "อยู่ในพื้นที่") {
+              resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-emerald-100 text-emerald-800";
+              resultBox.innerText = `✅ ลงเวลา "${actionType}" สำเร็จ! (ห่างจากร้าน ${data.distance} เมตร)`;
+            } else {
+              resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
+              resultBox.innerText = `⚠️ ลงเวลาสำเร็จ แต่คุณอยู่ "นอกพื้นที่ร้าน" (ห่าง ${data.distance} เมตร)`;
+            }
+            setTimeout(() => { liff.closeWindow(); }, 3000);
+          }
+        } catch (err) {
+          resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
+          resultBox.innerText = "❌ เกิดข้อผิดพลาดในการส่งข้อมูล";
+        }
+      }, (err) => {
+        resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
+        resultBox.innerText = "❌ กรุณาเปิด Location Service (GPS) บนมือถือ";
+      }, { enableHighAccuracy: true });
+    }
+  </script>
+</body>
+</html>
