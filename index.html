@@ -3,121 +3,888 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ระบบลงเวลาเข้า-ออกงาน</title>
+  <title>E-CHA Staff Attendance</title>
+
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
 
   <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 text-center">
-    <!-- โปรไฟล์พนักงาน -->
+
+    <!-- ================= PROFILE ================= -->
     <div id="profile-section" class="mb-6">
-      <img id="user-avatar" class="w-20 h-20 rounded-full mx-auto mb-3 shadow object-cover" src="https://via.placeholder.com/80" alt="Avatar">
-      <h2 id="user-name" class="text-xl font-bold text-gray-800">กำลังโหลดข้อมูล...</h2>
-      <p id="user-status" class="text-xs text-gray-500 mt-1">กรุณารอสักครู่</p>
+
+      <img
+        id="user-avatar"
+        class="w-20 h-20 rounded-full mx-auto mb-3 shadow object-cover"
+        src="https://via.placeholder.com/80"
+        alt="Avatar"
+      >
+
+      <h2
+        id="user-name"
+        class="text-xl font-bold text-gray-800"
+      >
+        กำลังโหลดข้อมูล...
+      </h2>
+
+      <p
+        id="user-status"
+        class="text-xs text-gray-500 mt-1"
+      >
+        กรุณารอสักครู่
+      </p>
+
     </div>
 
-    <!-- ปุ่มตอกบัตร -->
+
+    <!-- ================= CLOCK BUTTONS ================= -->
     <div class="grid grid-cols-2 gap-4 mb-4">
-      <button onclick="clockIn('เข้างาน')" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">
+
+      <!-- CLOCK IN -->
+      <button
+        id="clock-in-btn"
+        onclick="clockIn('เข้างาน')"
+        disabled
+        class="bg-emerald-500 hover:bg-emerald-600
+               disabled:bg-gray-300
+               disabled:cursor-not-allowed
+               text-white font-bold py-4 rounded-xl
+               shadow-lg transition active:scale-95"
+      >
         ☀️ เข้างาน
       </button>
-      <button onclick="clockIn('ออกงาน')" class="bg-rose-500 hover:bg-rose-600 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">
+
+
+      <!-- CLOCK OUT -->
+      <button
+        id="clock-out-btn"
+        onclick="clockIn('ออกงาน')"
+        disabled
+        class="bg-rose-500 hover:bg-rose-600
+               disabled:bg-gray-300
+               disabled:cursor-not-allowed
+               text-white font-bold py-4 rounded-xl
+               shadow-lg transition active:scale-95"
+      >
         🌙 ออกงาน
       </button>
+
     </div>
 
-    <!-- กล่องแสดงข้อความผลลัพธ์ -->
-    <div id="result-box" class="hidden p-3 rounded-lg text-sm font-medium mt-4"></div>
+
+    <!-- ================= RESULT BOX ================= -->
+    <div
+      id="result-box"
+      class="hidden p-3 rounded-lg
+             text-sm font-medium mt-4"
+    ></div>
+
+
+    <!-- ================= GPS INFO ================= -->
+    <div
+      id="gps-info"
+      class="text-xs text-gray-400 mt-4"
+    >
+      ระบบจะตรวจสอบ GPS เมื่อกดลงเวลา
+    </div>
+
   </div>
 
-  <script>
-    const LIFF_ID = "2011734616-iX8k105V";
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyBPYGNYSEEGkAGhIAzLBHXsEukhJR8QRfphmuR9pVdiOgt3V909tbePSuMuSFlCLUHJw/exec";
 
-    let userProfile = null;
+<script>
 
-    async function main() {
-      const nameEl = document.getElementById('user-name');
-      const statusEl = document.getElementById('user-status');
-      const avatarEl = document.getElementById('user-avatar');
+/* =====================================================
+   CONFIG
+   ===================================================== */
+
+/*
+ * LINE LIFF ID
+ */
+const LIFF_ID =
+  "2011734616-iX8k105V";
+
+
+/*
+ * Google Apps Script Web App
+ */
+const GAS_WEB_APP_URL =
+  "https://script.google.com/macros/s/AKfycbyBPYGNYSEEGkAGhIAzLBHXsEukhJR8QRfphmuR9pVdiOgt3V909tbePSuMuSFlCLUHJw/exec";
+
+
+/*
+ * GPS Accuracy ที่ยอมรับ
+ *
+ * เช่น 50 = ต้องมีความแม่นยำไม่เกิน ±50 เมตร
+ */
+const GPS_MAX_ACCURACY = 100;
+
+
+/*
+ * GPS Timeout
+ *
+ * 15 วินาที
+ */
+const GPS_TIMEOUT = 15000;
+
+
+/*
+ * ตัวแปรเก็บ Profile
+ */
+let userProfile = null;
+
+
+/*
+ * ป้องกันการกดปุ่มซ้ำ
+ */
+let isSubmitting = false;
+
+
+/* =====================================================
+   UI HELPERS
+   ===================================================== */
+
+
+/*
+ * แสดงผลลัพธ์
+ */
+function setResult(message, type) {
+
+  const box =
+    document.getElementById("result-box");
+
+
+  /*
+   * ลบ class เดิม
+   */
+  box.classList.remove(
+    "hidden",
+
+    "bg-yellow-100",
+    "text-yellow-800",
+
+    "bg-emerald-100",
+    "text-emerald-800",
+
+    "bg-rose-100",
+    "text-rose-800",
+
+    "bg-blue-100",
+    "text-blue-800"
+  );
+
+
+  /*
+   * SUCCESS
+   */
+  if (type === "success") {
+
+    box.classList.add(
+      "bg-emerald-100",
+      "text-emerald-800"
+    );
+
+  }
+
+
+  /*
+   * ERROR
+   */
+  else if (type === "error") {
+
+    box.classList.add(
+      "bg-rose-100",
+      "text-rose-800"
+    );
+
+  }
+
+
+  /*
+   * INFO
+   */
+  else if (type === "info") {
+
+    box.classList.add(
+      "bg-blue-100",
+      "text-blue-800"
+    );
+
+  }
+
+
+  /*
+   * LOADING
+   */
+  else {
+
+    box.classList.add(
+      "bg-yellow-100",
+      "text-yellow-800"
+    );
+
+  }
+
+
+  box.innerText = message;
+}
+
+
+/* =====================================================
+   ENABLE / DISABLE BUTTONS
+   ===================================================== */
+
+function setButtonsEnabled(enabled) {
+
+  document.getElementById(
+    "clock-in-btn"
+  ).disabled = !enabled;
+
+
+  document.getElementById(
+    "clock-out-btn"
+  ).disabled = !enabled;
+}
+
+
+/* =====================================================
+   SUBMITTING STATE
+   ===================================================== */
+
+function setSubmitting(submitting) {
+
+  isSubmitting = submitting;
+
+
+  const inBtn =
+    document.getElementById(
+      "clock-in-btn"
+    );
+
+
+  const outBtn =
+    document.getElementById(
+      "clock-out-btn"
+    );
+
+
+  inBtn.disabled = submitting;
+  outBtn.disabled = submitting;
+
+
+  if (submitting) {
+
+    inBtn.innerText =
+      "⏳ กำลังตรวจสอบ";
+
+    outBtn.innerText =
+      "⏳ กำลังตรวจสอบ";
+
+  }
+
+  else {
+
+    inBtn.innerText =
+      "☀️ เข้างาน";
+
+    outBtn.innerText =
+      "🌙 ออกงาน";
+
+  }
+}
+
+
+/* =====================================================
+   LIFF INITIALIZATION
+   ===================================================== */
+
+async function main() {
+
+  const nameEl =
+    document.getElementById(
+      "user-name"
+    );
+
+
+  const statusEl =
+    document.getElementById(
+      "user-status"
+    );
+
+
+  const avatarEl =
+    document.getElementById(
+      "user-avatar"
+    );
+
+
+  try {
+
+    /*
+     * Initialize LIFF
+     */
+    await liff.init({
+      liffId: LIFF_ID
+    });
+
+
+    /*
+     * ตรวจสอบ Login
+     */
+    if (!liff.isLoggedIn()) {
+
+      statusEl.innerText =
+        "กำลังเข้าสู่ระบบ LINE...";
+
+
+      liff.login();
+
+      return;
+    }
+
+
+    /*
+     * ดึง Profile
+     */
+    userProfile =
+      await liff.getProfile();
+
+
+    /*
+     * Avatar
+     */
+    avatarEl.src =
+      userProfile.pictureUrl ||
+      "https://via.placeholder.com/80";
+
+
+    /*
+     * Display Name
+     */
+    nameEl.innerText =
+      userProfile.displayName;
+
+
+    /*
+     * Status
+     */
+    statusEl.innerText =
+      "พร้อมลงเวลาทำงาน";
+
+
+    statusEl.className =
+      "text-xs text-emerald-600 mt-1 font-semibold";
+
+
+    /*
+     * เปิดปุ่ม
+     */
+    setButtonsEnabled(true);
+
+
+  }
+
+  catch (err) {
+
+    console.error(
+      "LIFF Init Error:",
+      err
+    );
+
+
+    nameEl.innerText =
+      "เกิดข้อผิดพลาดในการโหลด";
+
+
+    statusEl.innerText =
+      "กรุณาเปิดลิงก์นี้ผ่านแอป LINE";
+
+
+    statusEl.className =
+      "text-xs text-rose-500 mt-1 font-bold";
+
+
+    setButtonsEnabled(false);
+  }
+}
+
+
+/*
+ * Start LIFF
+ */
+main();
+
+
+/* =====================================================
+   CLOCK IN / CLOCK OUT
+   ===================================================== */
+
+function clockIn(actionType) {
+
+  /*
+   * ป้องกันการกดซ้ำ
+   */
+  if (isSubmitting) {
+    return;
+  }
+
+
+  /*
+   * ตรวจสอบ Profile
+   */
+  if (!userProfile) {
+
+    setResult(
+      "❌ ไม่พบข้อมูลผู้ใช้ กรุณาเปิดระบบผ่าน LINE อีกครั้ง",
+      "error"
+    );
+
+    return;
+  }
+
+
+  /*
+   * ตรวจสอบ GPS
+   */
+  if (!navigator.geolocation) {
+
+    setResult(
+      "❌ อุปกรณ์นี้ไม่รองรับ GPS",
+      "error"
+    );
+
+    return;
+  }
+
+
+  /*
+   * เริ่มสถานะกำลังทำงาน
+   */
+  setSubmitting(true);
+
+
+  setResult(
+    `📍 กำลังตรวจสอบตำแหน่งเพื่อ${actionType}...`,
+    "loading"
+  );
+
+
+  document.getElementById(
+    "gps-info"
+  ).innerText =
+    "กำลังขอตำแหน่ง GPS จากอุปกรณ์...";
+
+
+  /*
+   * ขอ GPS
+   */
+  navigator.geolocation.getCurrentPosition(
+
+    /* =================================================
+       GPS SUCCESS
+       ================================================= */
+
+    async function(position) {
 
       try {
-        await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) {
-          liff.login();
-        } else {
-          userProfile = await liff.getProfile();
-          avatarEl.src = userProfile.pictureUrl || 'https://via.placeholder.com/80';
-          nameEl.innerText = userProfile.displayName;
-          statusEl.innerText = "พร้อมลงเวลาทำงาน";
-          statusEl.className = "text-xs text-emerald-600 mt-1 font-semibold";
+
+        /*
+         * Latitude
+         */
+        const lat =
+          position.coords.latitude;
+
+
+        /*
+         * Longitude
+         */
+        const lng =
+          position.coords.longitude;
+
+
+        /*
+         * GPS Accuracy
+         */
+        const accuracy =
+          Math.round(
+            position.coords.accuracy || 0
+          );
+
+
+        document.getElementById(
+          "gps-info"
+        ).innerText =
+          `GPS Accuracy: ±${accuracy} เมตร`;
+
+
+        /*
+         * ตรวจ GPS Accuracy
+         */
+        if (
+          accuracy > GPS_MAX_ACCURACY
+        ) {
+
+          setResult(
+            `⚠️ GPS ยังไม่แม่นพอ (±${accuracy} เมตร)\n` +
+            `กรุณาเปิด Location/GPS แล้วลองใหม่ในบริเวณที่สัญญาณดีขึ้น`,
+            "error"
+          );
+
+
+          setSubmitting(false);
+
+          return;
         }
-      } catch (err) {
-        console.error("LIFF Init Error:", err);
-        nameEl.innerText = "เกิดข้อผิดพลาดในการโหลด";
-        statusEl.innerText = "กรุณาเปิดลิงก์นี้ผ่านแอป LINE เท่านั้น";
-        statusEl.className = "text-xs text-rose-500 mt-1 font-bold";
-      }
-    }
-    main();
 
-    function clockIn(actionType) {
-      const resultBox = document.getElementById('result-box');
-      resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-yellow-100 text-yellow-800";
-      resultBox.innerText = "กำลังตรวจสอบพิกัด GPS...";
-      resultBox.classList.remove('hidden');
 
-      if (!userProfile) {
-        alert("ไม่พบข้อมูลผู้ใช้ กรุณาลองใหม่อีกครั้ง");
-        return;
-      }
-
-      if (!navigator.geolocation) {
-        alert("อุปกรณ์ของคุณไม่รองรับ GPS");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(async (position) => {
+        /*
+         * Payload
+         */
         const payload = {
-          userId: userProfile.userId,
-          displayName: userProfile.displayName,
-          actionType: actionType,
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
+
+          userId:
+            userProfile.userId,
+
+          displayName:
+            userProfile.displayName,
+
+          actionType:
+            actionType,
+
+          lat:
+            lat,
+
+          lng:
+            lng
+
         };
 
-        try {
-          // ใช้ mode: 'no-cors' หรือส่งผ่าน fetch แบบ text/plain เพื่อป้องกัน CORS
-          const res = await fetch(GAS_WEB_APP_URL, {
-            method: "POST",
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify(payload)
-          });
-          const data = await res.json();
 
-          if (data.status === "success") {
-            if (data.isWithinArea === "อยู่ในพื้นที่") {
-              resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-emerald-100 text-emerald-800";
-              resultBox.innerText = `✅ ลงเวลา "${actionType}" สำเร็จ! (ห่างจากร้าน ${data.distance} เมตร)`;
-            } else {
-              resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
-              resultBox.innerText = `⚠️ ลงเวลาสำเร็จ แต่คุณอยู่ "นอกพื้นที่ร้าน" (ห่าง ${data.distance} เมตร)`;
+        /*
+         * แสดงสถานะ
+         */
+        setResult(
+          "📤 กำลังส่งข้อมูลลงเวลา...",
+          "info"
+        );
+
+
+        /* =================================================
+           SEND TO GOOGLE APPS SCRIPT
+           ================================================= */
+
+        const res =
+          await fetch(
+            GAS_WEB_APP_URL,
+            {
+
+              method: "POST",
+
+              /*
+               * text/plain
+               *
+               * ใช้ Simple Request
+               * ลดปัญหา CORS Preflight
+               */
+              headers: {
+
+                "Content-Type":
+                  "text/plain;charset=utf-8"
+
+              },
+
+              body:
+                JSON.stringify(payload)
+
             }
-            setTimeout(() => { liff.closeWindow(); }, 3000);
-          }
-        } catch (err) {
-          console.error("Submit Error:", err);
-          resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
-          resultBox.innerText = "❌ เกิดข้อผิดพลาดในการส่งข้อมูล";
+          );
+
+
+        /*
+         * อ่าน Response เป็น Text ก่อน
+         */
+        const responseText =
+          await res.text();
+
+
+        let data;
+
+
+        /*
+         * Parse JSON
+         */
+        try {
+
+          data =
+            JSON.parse(
+              responseText
+            );
+
         }
-      }, (err) => {
-        resultBox.className = "p-3 rounded-lg text-sm font-medium mt-4 bg-rose-100 text-rose-800";
-        resultBox.innerText = "❌ กรุณาเปิด Location Service (GPS) บนมือถือ";
-      }, { enableHighAccuracy: true, timeout: 10000 });
+
+        catch (parseError) {
+
+          console.error(
+            "Invalid JSON response:",
+            responseText
+          );
+
+
+          throw new Error(
+            "ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง"
+          );
+        }
+
+
+        /*
+         * ตรวจสอบ Status
+         */
+        if (
+          data.status !==
+          "success"
+        ) {
+
+          throw new Error(
+            data.message ||
+            "ไม่สามารถบันทึกข้อมูลได้"
+          );
+        }
+
+
+        /* =================================================
+           อยู่ในพื้นที่
+           ================================================= */
+
+        if (
+          data.isWithinArea ===
+          "อยู่ในพื้นที่"
+        ) {
+
+          let lineStatus;
+
+
+          if (
+            data.lineNotification ===
+            "sent"
+          ) {
+
+            lineStatus =
+              "📱 LINE แจ้งเตือนแล้ว";
+
+          }
+
+          else if (
+            data.lineNotification ===
+            "error"
+          ) {
+
+            lineStatus =
+              "⚠️ บันทึกเวลาแล้ว แต่ LINE แจ้งเตือนไม่สำเร็จ";
+
+          }
+
+          else {
+
+            lineStatus =
+              "📱 บันทึกเวลาแล้ว";
+
+          }
+
+
+          setResult(
+
+            `✅ ${actionType}สำเร็จ!\n` +
+
+            `ระยะจากร้าน ${data.distance} เมตร\n` +
+
+            lineStatus,
+
+            "success"
+
+          );
+
+        }
+
+
+        /* =================================================
+           อยู่นอกพื้นที่
+           ================================================= */
+
+        else {
+
+          setResult(
+
+            `⚠️ บันทึกเวลาแล้ว แต่คุณอยู่นอกพื้นที่ร้าน\n` +
+
+            `ระยะจากร้าน ${data.distance} เมตร`,
+
+            "error"
+
+          );
+
+        }
+
+
+        /*
+         * ปิด LIFF หลัง 3 วินาที
+         */
+        setTimeout(
+
+          function() {
+
+            if (
+              typeof liff !==
+                "undefined" &&
+
+              liff.isInClient()
+            ) {
+
+              liff.closeWindow();
+
+            }
+
+          },
+
+          3000
+
+        );
+
+
+      }
+
+
+      catch (err) {
+
+        console.error(
+          "Submit Error:",
+          err
+        );
+
+
+        setResult(
+
+          "❌ เกิดข้อผิดพลาดในการส่งข้อมูล\n" +
+          err.message,
+
+          "error"
+
+        );
+
+
+        setSubmitting(false);
+
+      }
+
+    },
+
+
+    /* =================================================
+       GPS ERROR
+       ================================================= */
+
+    function(error) {
+
+      console.error(
+        "GPS Error:",
+        error
+      );
+
+
+      let message =
+        "❌ ไม่สามารถอ่านตำแหน่ง GPS ได้";
+
+
+      /*
+       * Permission denied
+       */
+      if (
+        error.code === 1
+      ) {
+
+        message =
+          "❌ ไม่ได้รับอนุญาตให้ใช้ Location\n" +
+          "กรุณาเปิดสิทธิ์ Location ให้ LINE";
+
+      }
+
+
+      /*
+       * Position unavailable
+       */
+      else if (
+        error.code === 2
+      ) {
+
+        message =
+          "❌ ไม่พบตำแหน่ง GPS\n" +
+          "กรุณาเปิด Location Service แล้วลองใหม่";
+
+      }
+
+
+      /*
+       * Timeout
+       */
+      else if (
+        error.code === 3
+      ) {
+
+        message =
+          "❌ GPS ใช้เวลานานเกินไป\n" +
+          "กรุณาลองใหม่อีกครั้ง";
+
+      }
+
+
+      setResult(
+        message,
+        "error"
+      );
+
+
+      document.getElementById(
+        "gps-info"
+      ).innerText =
+        "GPS ยังไม่พร้อม";
+
+
+      setSubmitting(false);
+
+    },
+
+
+    /* =================================================
+       GPS OPTIONS
+       ================================================= */
+
+    {
+
+      /*
+       * ใช้ GPS ความแม่นยำสูง
+       */
+      enableHighAccuracy: true,
+
+      /*
+       * Timeout 15 วินาที
+       */
+      timeout: GPS_TIMEOUT,
+
+      /*
+       * ไม่ใช้ตำแหน่งเก่า
+       */
+      maximumAge: 0
+
     }
-  </script>
+
+  );
+}
+
+</script>
+
 </body>
 </html>
