@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff V.8 </title>
+  <title>E-CHA Staff V.8.1</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -16,6 +16,7 @@
     .text-xs{font-size:.75rem}.text-sm{font-size:.875rem}.text-lg{font-size:1.125rem}.text-xl{font-size:1.25rem}.text-2xl{font-size:1.5rem}.text-3xl{font-size:1.875rem}.text-4xl{font-size:2.25rem}.font-bold{font-weight:700}.font-semibold{font-weight:600}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-4{padding-top:1rem;padding-bottom:1rem}.px-2{padding-left:.5rem;padding-right:.5rem}.opacity-70{opacity:.7}.opacity-80{opacity:.8}.active\:scale-95:active{transform:scale(.95)}
     button,select{font:inherit}button{border:0;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}select{background:#fff;border:1px solid #d1d5db;border-radius:.75rem}
     .space-y-2 .border{background:#fff}.hover\:bg-slate-50:hover{background:#f8fafc}
+    .overflow-x-auto{overflow-x:auto;-webkit-overflow-scrolling:touch}.workdays-table{width:100%;min-width:1100px;border-collapse:collapse;font-size:.78rem}.workdays-table th{background:#f1f5f9;font-weight:700;white-space:nowrap;padding:.65rem .55rem;border-bottom:1px solid #e5e7eb}.workdays-table td{padding:.65rem .55rem;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:center}.workdays-table td.status{text-align:left;white-space:normal;min-width:180px}.summary-card{border:1px solid #e5e7eb;border-radius:1rem;padding:.75rem;background:#fff}
   </style>
 </head>
 
@@ -41,6 +42,25 @@
       <div id="result-box" class="hidden p-3 rounded-xl text-sm font-medium mt-4 whitespace-pre-line"></div>
       <div id="gps-info" class="text-xs text-gray-400 mt-4">ระบบจะตรวจสอบ GPS เมื่อกดลงเวลา</div>
     </section>
+
+    <div class="bg-white rounded-3xl shadow-xl p-5">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="text-lg font-bold">📅 ตรวจสอบวันทำงาน</div>
+          <div class="text-xs text-gray-500 mt-1">ตรวจสอบเวลาเข้า-ออก, ชั่วโมง, OT และวันหยุด</div>
+        </div>
+        <button id="workdays-toggle" onclick="toggleWorkdays()" class="bg-slate-900 text-white font-bold px-3 py-2 rounded-xl text-sm">ตรวจสอบ</button>
+      </div>
+
+      <div id="workdays-panel" class="hidden mt-4">
+        <div class="flex items-center justify-between mb-4 gap-3">
+          <div class="text-sm font-bold">ข้อมูลวันทำงาน</div>
+          <select id="workdays-month" onchange="loadWorkdays()" class="border rounded-xl px-2 py-2 text-sm"></select>
+        </div>
+        <div id="workdays-summary" class="grid grid-cols-2 gap-3 mb-4"></div>
+        <div id="workdays-content"><div class="text-sm text-gray-400">กำลังโหลด...</div></div>
+      </div>
+    </div>
 
     <section id="page-income" class="hidden bg-white rounded-3xl shadow-xl p-5">
       <div class="flex items-center justify-between mb-4"><div><h1 class="text-xl font-bold">💰 รายได้</h1><p class="text-xs text-gray-500">รายได้ของฉันตาม Payroll</p></div><select id="income-month" onchange="loadIncome()" class="border rounded-xl px-2 py-2 text-sm"></select></div>
@@ -83,7 +103,7 @@ let idToken = '';
 let isSubmitting = false;
 
 const STAFF_CACHE_TTL = 20000;
-const staffCache = { income:{}, payslips:null, incentive:{} };
+const staffCache = { income:{}, payslips:null, incentive:{}, workdays:{} };
 const staffInflight = {};
 
 function cacheGet_(bucket,key){
@@ -95,7 +115,7 @@ function cacheGet_(bucket,key){
 function cacheSet_(bucket,key,data){bucket[key]={time:Date.now(),data};}
 function persistentGet_(key){try{const x=JSON.parse(sessionStorage.getItem('ECHA_'+key)||'null');if(x&&Date.now()-x.time<120000)return x.data;}catch(e){}return null;}
 function persistentSet_(key,data){try{sessionStorage.setItem('ECHA_'+key,JSON.stringify({time:Date.now(),data}));}catch(e){}}
-function clearStaffReadCache_(){staffCache.income={};staffCache.payslips=null;staffCache.incentive={};}
+function clearStaffReadCache_(){staffCache.income={};staffCache.payslips=null;staffCache.incentive={};staffCache.workdays={};}
 
 function money(v){return Number(v||0).toLocaleString('th-TH',{minimumFractionDigits:0,maximumFractionDigits:2})+' ฿';}
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
@@ -537,6 +557,67 @@ async function loadIncentive(){
 function renderIncentive_(d){
   document.getElementById('incentive-content').innerHTML=
     `<div class="p-5 rounded-3xl bg-slate-900 text-white"><div class="text-sm opacity-80">ยอดโบนัสที่ยังไม่จ่าย</div><div class="text-3xl font-bold mt-1">${money(d.balance)}</div><div class="text-xs mt-2 opacity-70">ได้รับสะสมทั้งปี ${money(d.totalEarned)} · จ่ายแล้ว ${money(d.paid)}</div></div><div class="space-y-2 mt-4">${d.rows.length?d.rows.map(x=>`<div class="border rounded-2xl p-3 flex justify-between"><div><b>${esc(x.description||'Incentive')}</b><div class="text-xs text-gray-500">${esc(x.date)} · ${esc(x.status)}</div></div><b>${money(x.amount)}</b></div>`).join(''):'<div class="text-sm text-gray-400">ยังไม่มีรายการโบนัสสะสม</div>'}</div>`;
+}
+
+function toggleWorkdays(){
+  const panel=document.getElementById('workdays-panel');
+  const btn=document.getElementById('workdays-toggle');
+  if(!panel)return;
+  const open=panel.classList.toggle('hidden')===false;
+  if(btn)btn.innerText=open?'ซ่อน':'ตรวจสอบ';
+  if(open)loadWorkdays();
+}
+
+function loadWorkdays(){
+  if(!userProfile)return;
+  const sel=document.getElementById('workdays-month');
+  if(!sel.options.length){
+    const now=new Date();
+    for(let i=0;i<6;i++){
+      const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+      const key=d.toISOString().slice(0,7);
+      sel.add(new Option(key,key));
+    }
+  }
+  const month=sel.value||'';
+  const cached=cacheGet_(staffCache.workdays,month);
+  if(cached){renderWorkdays_(cached);return;}
+  const stored=persistentGet_('workdays_'+month);
+  if(stored){cacheSet_(staffCache.workdays,month,stored);renderWorkdays_(stored);return;}
+  document.getElementById('workdays-content').innerHTML='<div class="text-sm text-gray-400">กำลังตรวจสอบวันทำงาน...</div>';
+  api('GET_MY_WORKDAYS',{month:month}).then(d=>{
+    cacheSet_(staffCache.workdays,month,d);persistentSet_('workdays_'+month,d);renderWorkdays_(d);
+  }).catch(e=>{
+    document.getElementById('workdays-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;
+  });
+}
+
+function renderWorkdays_(d){
+  const summary=d&&d.summary?d.summary:{};
+  document.getElementById('workdays-summary').innerHTML=`
+    <div class="summary-card"><div class="text-xs text-gray-500">วันทำงาน</div><div class="text-xl font-bold">${Number(summary.workedDays||0)} วัน</div></div>
+    <div class="summary-card"><div class="text-xs text-gray-500">ชั่วโมงทำงาน</div><div class="text-xl font-bold">${Number(summary.totalHours||0).toFixed(2)} ชม.</div></div>
+    <div class="summary-card"><div class="text-xs text-gray-500">OT</div><div class="text-xl font-bold">${Number(summary.totalOTHours||0).toFixed(2)} ชม.</div></div>
+    <div class="summary-card"><div class="text-xs text-gray-500">OT + วันหยุด</div><div class="text-xl font-bold">${money(Number(summary.totalOTPay||0)+Number(summary.totalHolidayPay||0))}</div></div>`;
+
+  const rows=Array.isArray(d&&d.rows)?d.rows:[];
+  if(!rows.length){
+    document.getElementById('workdays-content').innerHTML='<div class="border rounded-2xl p-5 text-center text-sm text-gray-400">ไม่พบข้อมูลวันทำงานในเดือนนี้</div>';
+    return;
+  }
+  document.getElementById('workdays-content').innerHTML=`
+    <div class="overflow-x-auto border rounded-2xl">
+      <table class="workdays-table">
+        <thead><tr>
+          <th>Date</th><th>Employee_ID</th><th>Name</th><th>Type</th><th>Check_In</th><th>Check_Out</th><th>Hours</th><th>Base_Pay</th><th>OT_Hours</th><th>OT_Pay</th><th>Holiday_Pay</th><th>Status</th>
+        </tr></thead>
+        <tbody>${rows.map(r=>`<tr>
+          <td>${esc(r.date)}</td><td>${esc(r.employeeId)}</td><td>${esc(r.name)}</td><td>${esc(r.type)}</td>
+          <td>${esc(r.checkIn||'-')}</td><td>${esc(r.checkOut||'-')}</td><td>${Number(r.hours||0).toFixed(2)}</td><td>${money(r.basePay)}</td>
+          <td>${Number(r.otHours||0).toFixed(2)}</td><td>${money(r.otPay)}</td><td>${money(r.holidayPay)}</td><td class="status">${esc(r.status||'-')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
 }
 
 function openAdmin(){if(!ADMIN_LIFF_URL||ADMIN_LIFF_URL.includes('PUT_')){document.getElementById('admin-result').innerText='⚠️ ยังไม่ได้ตั้ง Admin LIFF URL';return;}document.getElementById('admin-result').innerText='กำลังเปิด Admin Panel...';window.location.href=ADMIN_LIFF_URL;}
