@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff Attendance V2</title>
+  <title>E-CHA Staff Attendance V3</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -102,19 +102,95 @@ function routeFromMenu(){
   showPage(['income','payslips','incentive','admin','contact'].includes(p)?p:'clock');
 }
 
+function isAccessTokenExpiredError_(e){
+  const msg=String((e&&e.message)||e||'').toLowerCase();
+  const code=String((e&&e.code)||'').toUpperCase();
+  return code==='UNAUTHORIZED' ||
+         msg.includes('access token expired') ||
+         msg.includes('access token revoked') ||
+         msg.includes('token expired') ||
+         msg.includes('token revoked');
+}
+
+function restartLiffLogin_(){
+  try{
+    sessionStorage.setItem('ECHA_LIFF_REAUTH','1');
+  }catch(e){}
+
+  // In the LIFF browser, liff.login() must not be called manually.
+  // Re-initializing after logout lets LINE obtain a fresh access/ID token.
+  try{
+    if(liff.isLoggedIn()) liff.logout();
+  }catch(e){}
+
+  setTimeout(()=>{
+    window.location.replace(window.location.href.split('#')[0]);
+  },300);
+}
+
 async function main(){
   try{
     await liff.init({liffId:LIFF_ID});
-    if(!liff.isLoggedIn()){liff.login();return;}
+
+    if(!liff.isLoggedIn()){
+      // External browser: use LINE Login. In LIFF browser init handles login.
+      if(!liff.isInClient()){
+        liff.login({redirectUri:window.location.href});
+        return;
+      }
+      throw new Error('LINE Login ยังไม่พร้อม กรุณาเปิด LIFF ใหม่');
+    }
+
     idToken=liff.getIDToken();
-    if(!idToken) throw new Error('ไม่พบ LINE ID Token');
-    userProfile=await liff.getProfile();
+    if(!idToken) throw new Error('ไม่พบ LINE ID Token กรุณาเปิด Staff LIFF ใหม่');
+
+    /*
+      Do NOT call liff.getProfile() here.
+      getProfile() requires a valid LIFF access token. If that token is
+      expired/revoked, it produces "The access token expired".
+      The decoded ID token already contains the main profile fields and is
+      refreshed by LIFF initialization.
+    */
+    const decoded=liff.getDecodedIDToken();
+    if(!decoded || !decoded.sub){
+      throw new Error('ไม่สามารถอ่าน LINE ID Token ได้');
+    }
+
+    userProfile={
+      userId:String(decoded.sub),
+      displayName:String(decoded.name||'พนักงาน'),
+      pictureUrl:String(decoded.picture||'')
+    };
+
+    try{sessionStorage.removeItem('ECHA_LIFF_REAUTH');}catch(e){}
+
     document.getElementById('user-avatar').src=userProfile.pictureUrl||'https://via.placeholder.com/80';
     document.getElementById('user-name').innerText=userProfile.displayName;
     document.getElementById('user-status').innerText='พร้อมใช้งาน';
     document.getElementById('user-status').className='text-xs text-emerald-600 mt-1 font-semibold';
-    setButtonsEnabled(true); routeFromMenu();
-  }catch(e){document.getElementById('user-name').innerText='เกิดข้อผิดพลาด';document.getElementById('user-status').innerText=e.message||'กรุณาเปิดผ่าน LINE';setButtonsEnabled(false);}
+    setButtonsEnabled(true);
+    routeFromMenu();
+
+  }catch(e){
+    console.error('LIFF init error:',e);
+
+    if(isAccessTokenExpiredError_(e)){
+      let alreadyRetried=false;
+      try{alreadyRetried=sessionStorage.getItem('ECHA_LIFF_REAUTH')==='1';}catch(x){}
+
+      if(!alreadyRetried){
+        document.getElementById('user-name').innerText='กำลังต่ออายุการเข้าสู่ระบบ...';
+        document.getElementById('user-status').innerText='กรุณารอสักครู่';
+        setButtonsEnabled(false);
+        restartLiffLogin_();
+        return;
+      }
+    }
+
+    document.getElementById('user-name').innerText='เกิดข้อผิดพลาด';
+    document.getElementById('user-status').innerText=e.message||'กรุณาเปิดผ่าน LINE';
+    setButtonsEnabled(false);
+  }
 }
 
 function clockIn(actionType){
