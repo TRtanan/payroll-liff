@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff Attendance</title>
+  <title>E-CHA Staff Attendance V2</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -72,6 +72,7 @@ const ADMIN_LIFF_URL = "PUT_ADMIN_LIFF_URL_HERE";
 const GPS_MAX_ACCURACY = 100;
 const GPS_TIMEOUT = 15000;
 let userProfile = null;
+let idToken = '';
 let isSubmitting = false;
 
 function money(v){return Number(v||0).toLocaleString('th-TH',{minimumFractionDigits:0,maximumFractionDigits:2})+' ฿';}
@@ -81,7 +82,9 @@ function setButtonsEnabled(v){document.getElementById('clock-in-btn').disabled=!
 function setSubmitting(v){isSubmitting=v;setButtonsEnabled(!v && !!userProfile);if(v){document.getElementById('clock-in-btn').innerText='⏳ กำลังตรวจสอบ';document.getElementById('clock-out-btn').innerText='⏳ กำลังตรวจสอบ';}else{document.getElementById('clock-in-btn').innerText='☀️ เข้างาน';document.getElementById('clock-out-btn').innerText='🌙 ออกงาน';}}
 
 async function api(action,payload={}){
-  const body={requestType:'staff',action,userId:userProfile.userId,idToken:liff.getIDToken(),...payload};
+  if(!userProfile) throw new Error('ยังไม่มีข้อมูลผู้ใช้งาน');
+  if(!idToken) throw new Error('ไม่พบ LINE ID Token กรุณาเปิด Staff LIFF ใหม่');
+  const body={requestType:'staff',action,userId:userProfile.userId,idToken,...payload};
   const res=await fetch(GAS_WEB_APP_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
   const text=await res.text();let data;try{data=JSON.parse(text);}catch(e){throw new Error('ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง');}
   if(!data.ok) throw new Error(data.error||'ไม่สามารถโหลดข้อมูลได้');
@@ -103,6 +106,8 @@ async function main(){
   try{
     await liff.init({liffId:LIFF_ID});
     if(!liff.isLoggedIn()){liff.login();return;}
+    idToken=liff.getIDToken();
+    if(!idToken) throw new Error('ไม่พบ LINE ID Token');
     userProfile=await liff.getProfile();
     document.getElementById('user-avatar').src=userProfile.pictureUrl||'https://via.placeholder.com/80';
     document.getElementById('user-name').innerText=userProfile.displayName;
