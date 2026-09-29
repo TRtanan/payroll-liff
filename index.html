@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff Attendance V6</title>
+  <title>E-CHA Staff Attendance V7 Performance</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -75,6 +75,19 @@ let userProfile = null;
 let idToken = '';
 let isSubmitting = false;
 
+const STAFF_CACHE_TTL = 20000;
+const staffCache = { income:{}, payslips:null, incentive:{} };
+const staffInflight = {};
+
+function cacheGet_(bucket,key){
+  const item=bucket[key];
+  if(!item)return null;
+  if(Date.now()-item.time>STAFF_CACHE_TTL){delete bucket[key];return null;}
+  return item.data;
+}
+function cacheSet_(bucket,key,data){bucket[key]={time:Date.now(),data};}
+function clearStaffReadCache_(){staffCache.income={};staffCache.payslips=null;staffCache.incentive={};}
+
 function money(v){return Number(v||0).toLocaleString('th-TH',{minimumFractionDigits:0,maximumFractionDigits:2})+' ฿';}
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function setResult(message,type){const b=document.getElementById('result-box');b.className='p-3 rounded-xl text-sm font-medium mt-4 whitespace-pre-line';b.classList.add(type==='success'?'bg-emerald-100':type==='error'?'bg-rose-100':type==='info'?'bg-blue-100':'bg-yellow-100',type==='success'?'text-emerald-800':type==='error'?'text-rose-800':type==='info'?'text-blue-800':'text-yellow-800');b.innerText=message;}
@@ -84,43 +97,38 @@ function setSubmitting(v){isSubmitting=v;setButtonsEnabled(!v && !!userProfile);
 async function api(action,payload={}){
   if(!userProfile) throw new Error('ยังไม่มีข้อมูลผู้ใช้งาน');
 
-  // Use the LIFF access token for server authentication.
-  // Do NOT rely on the ID token here because LINE ID tokens are valid
-  // for only 1 hour. The access token is valid for a longer period and
-  // the backend verifies it with LINE before resolving the employee.
-  const accessToken=liff.getAccessToken();
-  if(!accessToken) throw new Error('ไม่พบ LINE Access Token กรุณาเปิด Staff LIFF ใหม่');
+  const requestKey=action+'|'+JSON.stringify(payload||{});
+  if(staffInflight[requestKey]) return staffInflight[requestKey];
 
-  const body={
-    requestType:'staff',
-    action,
-    accessToken,
-    ...payload
-  };
+  staffInflight[requestKey]=(async()=>{
+    const accessToken=liff.getAccessToken();
+    if(!accessToken) throw new Error('ไม่พบ LINE Access Token กรุณาเปิด Staff LIFF ใหม่');
 
-  const res=await fetch(GAS_WEB_APP_URL,{
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(body)
-  });
+    const body={requestType:'staff',action,accessToken,...payload};
 
-  const text=await res.text();
-  let data;
-  try{
-    data=JSON.parse(text);
-  }catch(e){
-    throw new Error('ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง');
-  }
+    const res=await fetch(GAS_WEB_APP_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify(body)
+    });
 
-  if(!data.ok) {
-    const msg=String(data.error||'ไม่สามารถโหลดข้อมูลได้');
-    if(/access token.*expired|access token.*invalid|token.*expired/i.test(msg)){
-      throw new Error('LINE Session หมดอายุ กรุณาปิด Staff แล้วเปิดจาก Rich Menu ใหม่');
+    const text=await res.text();
+    let data;
+    try{data=JSON.parse(text);}
+    catch(e){throw new Error('ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง');}
+
+    if(!data.ok){
+      const msg=String(data.error||'ไม่สามารถโหลดข้อมูลได้');
+      if(/access token.*expired|access token.*invalid|token.*expired/i.test(msg)){
+        throw new Error('LINE Session หมดอายุ กรุณาปิด Staff แล้วเปิดจาก Rich Menu ใหม่');
+      }
+      throw new Error(msg);
     }
-    throw new Error(msg);
-  }
+    return data.data;
+  })();
 
-  return data.data;
+  try{return await staffInflight[requestKey];}
+  finally{delete staffInflight[requestKey];}
 }
 
 function showPage(page){
@@ -304,6 +312,8 @@ function clockIn(actionType){
             ? '⚠️ บันทึกเวลาแล้ว แต่ LINE แจ้งเตือนไม่สำเร็จ'
             : '📱 บันทึกเวลาแล้ว';
 
+      clearStaffReadCache_();
+
       if(data.isWithinArea==='อยู่ในพื้นที่'){
         setResult(
           `✅ ${actionType}สำเร็จ!\n`+
@@ -433,13 +443,90 @@ function renderIncome(d){
     </div>`;
 }
 
-async function loadIncome(){if(!userProfile)return;try{const sel=document.getElementById('income-month');if(!sel.options.length){const now=new Date();for(let i=0;i<6;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const key=d.toISOString().slice(0,7);sel.add(new Option(key,key));}}const d=await api('GET_MY_INCOME',{month:sel.value||undefined});renderIncome(d);}catch(e){document.getElementById('income-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
+async function loadIncome(){
+  if(!userProfile)return;
+  const content=document.getElementById('income-content');
+  try{
+    const sel=document.getElementById('income-month');
+    if(!sel.options.length){
+      const now=new Date();
+      for(let i=0;i<6;i++){
+        const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+        const key=d.toISOString().slice(0,7);
+        sel.add(new Option(key,key));
+      }
+    }
+    const month=sel.value||'';
+    const cached=cacheGet_(staffCache.income,month);
+    if(cached){renderIncome(cached);return;}
+    content.innerHTML='<div class="text-sm text-gray-400">กำลังโหลดรายได้...</div>';
+    const d=await api('GET_MY_INCOME',{month:month||undefined});
+    cacheSet_(staffCache.income,month,d);
+    renderIncome(d);
+  }catch(e){
+    content.innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;
+  }
+}
 
-async function loadPayslips(){if(!userProfile)return;try{const rows=await api('GET_MY_PAYSLIPS');document.getElementById('payslip-list').innerHTML=rows.length?rows.map((r,i)=>`<button onclick='showPayslip(${JSON.stringify(r).replace(/</g,'\\u003c')})' class="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"><div class="flex justify-between"><b>📄 ${esc(r.periodId)}</b><b>${money(r.netPay)}</b></div><div class="text-xs text-gray-500 mt-1">วันที่จ่าย ${esc(r.payDate)} · ${esc(r.status)}</div></button>`).join(''):'<div class="text-sm text-gray-400">ยังไม่มีสลิปเงินเดือน</div>';}catch(e){document.getElementById('payslip-list').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
+async function loadPayslips(){
+  if(!userProfile)return;
+  try{
+    const cached=staffCache.payslips &&
+      (Date.now()-staffCache.payslips.time<=STAFF_CACHE_TTL)
+      ? staffCache.payslips.data : null;
+
+    if(cached){renderPayslips_(cached);return;}
+
+    document.getElementById('payslip-list').innerHTML=
+      '<div class="text-sm text-gray-400">กำลังโหลดสลิป...</div>';
+
+    const rows=await api('GET_MY_PAYSLIPS');
+    staffCache.payslips={time:Date.now(),data:rows};
+    renderPayslips_(rows);
+  }catch(e){
+    document.getElementById('payslip-list').innerHTML=
+      `<div class="text-rose-600">❌ ${esc(e.message)}</div>`;
+  }
+}
+
+function renderPayslips_(rows){
+  document.getElementById('payslip-list').innerHTML=
+    rows.length
+      ? rows.map((r,i)=>`<button onclick='showPayslip(${JSON.stringify(r).replace(/</g,'\\u003c')})' class="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"><div class="flex justify-between"><b>📄 ${esc(r.periodId)}</b><b>${money(r.netPay)}</b></div><div class="text-xs text-gray-500 mt-1">วันที่จ่าย ${esc(r.payDate)} · ${esc(r.status)}</div></button>`).join('')
+      : '<div class="text-sm text-gray-400">ยังไม่มีสลิปเงินเดือน</div>';
+}
+
 function showPayslip(r){const d=document.getElementById('payslip-detail');d.classList.remove('hidden');d.innerHTML=`<div class="border-2 rounded-2xl p-4"><div class="text-center"><div class="font-bold text-lg">E-CHA Payroll</div><div class="text-sm text-gray-500">📄 สลิปเงินเดือน</div></div><div class="border-t my-3"></div><div class="text-sm space-y-2">${line('รอบเงินเดือน',r.periodId)}${line('วันที่จ่าย',r.payDate)}${line('เงินเดือน/ค่าแรง',money(r.basePay))}${line('OT',money(r.otPay))}${line('วันหยุด',money(r.holidayPay))}${line('ค่าตำแหน่ง',money(r.positionAllowance))}${line('Attendance Bonus',money(r.attendanceBonus))}${line('Incentive',money(r.incentive))}${line('รายได้อื่น',money(r.otherEarning))}${line('หัก',money(r.deduction))}</div><div class="border-t my-3"></div><div class="flex justify-between font-bold text-lg"><span>รับสุทธิ</span><span>${money(r.netPay)}</span></div>${r.pdfUrl?`<a href="${esc(r.pdfUrl)}" target="_blank" class="block mt-4 text-center bg-slate-900 text-white py-3 rounded-xl font-bold">📥 เปิด PDF</a>`:''}</div>`;d.scrollIntoView({behavior:'smooth'});}
 function line(a,b){return `<div class="flex justify-between"><span class="text-gray-500">${a}</span><b>${b}</b></div>`;}
 
-async function loadIncentive(){if(!userProfile)return;try{const sel=document.getElementById('incentive-year');if(!sel.options.length){const y=new Date().getFullYear();for(let i=0;i<3;i++)sel.add(new Option(String(y-i),String(y-i)));}const d=await api('GET_MY_INCENTIVE',{year:Number(sel.value)});document.getElementById('incentive-content').innerHTML=`<div class="p-5 rounded-3xl bg-slate-900 text-white"><div class="text-sm opacity-80">ยอดโบนัสที่ยังไม่จ่าย</div><div class="text-3xl font-bold mt-1">${money(d.balance)}</div><div class="text-xs mt-2 opacity-70">ได้รับสะสมทั้งปี ${money(d.totalEarned)} · จ่ายแล้ว ${money(d.paid)}</div></div><div class="space-y-2 mt-4">${d.rows.length?d.rows.map(x=>`<div class="border rounded-2xl p-3 flex justify-between"><div><b>${esc(x.description||'Incentive')}</b><div class="text-xs text-gray-500">${esc(x.date)} · ${esc(x.status)}</div></div><b>${money(x.amount)}</b></div>`).join(''):'<div class="text-sm text-gray-400">ยังไม่มีรายการโบนัสสะสม</div>'}</div>`;}catch(e){document.getElementById('incentive-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
+async function loadIncentive(){
+  if(!userProfile)return;
+  try{
+    const sel=document.getElementById('incentive-year');
+    if(!sel.options.length){
+      const y=new Date().getFullYear();
+      for(let i=0;i<3;i++)sel.add(new Option(String(y-i),String(y-i)));
+    }
+    const year=String(sel.value||'');
+    const cached=cacheGet_(staffCache.incentive,year);
+    if(cached){renderIncentive_(cached);return;}
+
+    document.getElementById('incentive-content').innerHTML=
+      '<div class="text-sm text-gray-400">กำลังโหลดโบนัส...</div>';
+
+    const d=await api('GET_MY_INCENTIVE',{year:Number(year)});
+    cacheSet_(staffCache.incentive,year,d);
+    renderIncentive_(d);
+  }catch(e){
+    document.getElementById('incentive-content').innerHTML=
+      `<div class="text-rose-600">❌ ${esc(e.message)}</div>`;
+  }
+}
+
+function renderIncentive_(d){
+  document.getElementById('incentive-content').innerHTML=
+    `<div class="p-5 rounded-3xl bg-slate-900 text-white"><div class="text-sm opacity-80">ยอดโบนัสที่ยังไม่จ่าย</div><div class="text-3xl font-bold mt-1">${money(d.balance)}</div><div class="text-xs mt-2 opacity-70">ได้รับสะสมทั้งปี ${money(d.totalEarned)} · จ่ายแล้ว ${money(d.paid)}</div></div><div class="space-y-2 mt-4">${d.rows.length?d.rows.map(x=>`<div class="border rounded-2xl p-3 flex justify-between"><div><b>${esc(x.description||'Incentive')}</b><div class="text-xs text-gray-500">${esc(x.date)} · ${esc(x.status)}</div></div><b>${money(x.amount)}</b></div>`).join(''):'<div class="text-sm text-gray-400">ยังไม่มีรายการโบนัสสะสม</div>'}</div>`;
+}
 
 function openAdmin(){if(!ADMIN_LIFF_URL||ADMIN_LIFF_URL.includes('PUT_')){document.getElementById('admin-result').innerText='⚠️ ยังไม่ได้ตั้ง Admin LIFF URL';return;}document.getElementById('admin-result').innerText='กำลังเปิด Admin Panel...';window.location.href=ADMIN_LIFF_URL;}
 function contactAdmin(){document.getElementById('page-contact').querySelector('p').innerText='กรุณากลับไปที่ห้องแชท LINE ของ E-CHA Staff แล้วส่งข้อความหาบ๋อมแบมได้เลยครับ';}
