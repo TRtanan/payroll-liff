@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff Attendance V3</title>
+  <title>E-CHA Staff Attendance V4</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -68,7 +68,7 @@
 <script>
 const LIFF_ID = "2011734616-iX8k105V";
 const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyBPYGNYSEEGkAGhIAzLBHXsEukhJR8QRfphmuR9pVdiOgt3V909tbePSuMuSFlCLUHJw/exec";
-const ADMIN_LIFF_URL = "PUT_ADMIN_LIFF_URL_HERE";
+const ADMIN_LIFF_URL = "";
 const GPS_MAX_ACCURACY = 100;
 const GPS_TIMEOUT = 15000;
 let userProfile = null;
@@ -83,11 +83,43 @@ function setSubmitting(v){isSubmitting=v;setButtonsEnabled(!v && !!userProfile);
 
 async function api(action,payload={}){
   if(!userProfile) throw new Error('ยังไม่มีข้อมูลผู้ใช้งาน');
-  if(!idToken) throw new Error('ไม่พบ LINE ID Token กรุณาเปิด Staff LIFF ใหม่');
-  const body={requestType:'staff',action,userId:userProfile.userId,idToken,...payload};
-  const res=await fetch(GAS_WEB_APP_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
-  const text=await res.text();let data;try{data=JSON.parse(text);}catch(e){throw new Error('ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง');}
-  if(!data.ok) throw new Error(data.error||'ไม่สามารถโหลดข้อมูลได้');
+
+  // Use the LIFF access token for server authentication.
+  // Do NOT rely on the ID token here because LINE ID tokens are valid
+  // for only 1 hour. The access token is valid for a longer period and
+  // the backend verifies it with LINE before resolving the employee.
+  const accessToken=liff.getAccessToken();
+  if(!accessToken) throw new Error('ไม่พบ LINE Access Token กรุณาเปิด Staff LIFF ใหม่');
+
+  const body={
+    requestType:'staff',
+    action,
+    accessToken,
+    ...payload
+  };
+
+  const res=await fetch(GAS_WEB_APP_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(body)
+  });
+
+  const text=await res.text();
+  let data;
+  try{
+    data=JSON.parse(text);
+  }catch(e){
+    throw new Error('ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง');
+  }
+
+  if(!data.ok) {
+    const msg=String(data.error||'ไม่สามารถโหลดข้อมูลได้');
+    if(/access token.*expired|access token.*invalid|token.*expired/i.test(msg)){
+      throw new Error('LINE Session หมดอายุ กรุณาปิด Staff แล้วเปิดจาก Rich Menu ใหม่');
+    }
+    throw new Error(msg);
+  }
+
   return data.data;
 }
 
@@ -102,58 +134,58 @@ function routeFromMenu(){
   showPage(['income','payslips','incentive','admin','contact'].includes(p)?p:'clock');
 }
 
-function isAccessTokenExpiredError_(e){
+function isAuthExpiredError_(e){
   const msg=String((e&&e.message)||e||'').toLowerCase();
   const code=String((e&&e.code)||'').toUpperCase();
   return code==='UNAUTHORIZED' ||
          msg.includes('access token expired') ||
-         msg.includes('access token revoked') ||
+         msg.includes('access token invalid') ||
          msg.includes('token expired') ||
-         msg.includes('token revoked');
+         msg.includes('token invalid') ||
+         msg.includes('session หมดอายุ');
 }
 
 function restartLiffLogin_(){
-  try{
-    sessionStorage.setItem('ECHA_LIFF_REAUTH','1');
-  }catch(e){}
+  try{sessionStorage.setItem('ECHA_LIFF_REAUTH','1');}catch(e){}
 
-  // In the LIFF browser, liff.login() must not be called manually.
-  // Re-initializing after logout lets LINE obtain a fresh access/ID token.
   try{
     if(liff.isLoggedIn()) liff.logout();
   }catch(e){}
 
   setTimeout(()=>{
-    window.location.replace(window.location.href.split('#')[0]);
+    // Return to the LIFF entry URL so LINE can establish a fresh session.
+    window.location.replace('https://liff.line.me/'+LIFF_ID);
   },300);
 }
 
 async function main(){
   try{
-    await liff.init({liffId:LIFF_ID});
+    // LIFF should be initialized before reading query parameters or
+    // requesting tokens.
+    await liff.init({
+      liffId:LIFF_ID,
+      withLoginOnExternalBrowser:true
+    });
 
     if(!liff.isLoggedIn()){
-      // External browser: use LINE Login. In LIFF browser init handles login.
-      if(!liff.isInClient()){
-        liff.login({redirectUri:window.location.href});
-        return;
-      }
-      throw new Error('LINE Login ยังไม่พร้อม กรุณาเปิด LIFF ใหม่');
+      throw new Error('LINE Login ยังไม่พร้อม กรุณาเปิดจาก Rich Menu ใหม่');
     }
 
-    idToken=liff.getIDToken();
-    if(!idToken) throw new Error('ไม่พบ LINE ID Token กรุณาเปิด Staff LIFF ใหม่');
+    const accessToken=liff.getAccessToken();
+    if(!accessToken){
+      throw new Error('ไม่พบ LINE Access Token กรุณาปิด Staff แล้วเปิดจาก Rich Menu ใหม่');
+    }
+
+    idToken=liff.getIDToken()||'';
 
     /*
-      Do NOT call liff.getProfile() here.
-      getProfile() requires a valid LIFF access token. If that token is
-      expired/revoked, it produces "The access token expired".
-      The decoded ID token already contains the main profile fields and is
-      refreshed by LIFF initialization.
+      getDecodedIDToken() is used only for display in the LIFF UI.
+      The server never trusts this decoded profile data. Server identity
+      comes from the verified access token.
     */
     const decoded=liff.getDecodedIDToken();
     if(!decoded || !decoded.sub){
-      throw new Error('ไม่สามารถอ่าน LINE ID Token ได้');
+      throw new Error('ไม่สามารถอ่าน LINE profile ได้ กรุณาตรวจสอบ openid scope');
     }
 
     userProfile={
@@ -164,22 +196,29 @@ async function main(){
 
     try{sessionStorage.removeItem('ECHA_LIFF_REAUTH');}catch(e){}
 
-    document.getElementById('user-avatar').src=userProfile.pictureUrl||'https://via.placeholder.com/80';
+    document.getElementById('user-avatar').src=
+      userProfile.pictureUrl||'https://via.placeholder.com/80';
     document.getElementById('user-name').innerText=userProfile.displayName;
     document.getElementById('user-status').innerText='พร้อมใช้งาน';
-    document.getElementById('user-status').className='text-xs text-emerald-600 mt-1 font-semibold';
+    document.getElementById('user-status').className=
+      'text-xs text-emerald-600 mt-1 font-semibold';
+
     setButtonsEnabled(true);
+
+    // Important: read ?page=... only after liff.init() completes.
     routeFromMenu();
 
   }catch(e){
-    console.error('LIFF init error:',e);
+    console.error('LIFF init/auth error:',e);
 
-    if(isAccessTokenExpiredError_(e)){
+    if(isAuthExpiredError_(e)){
       let alreadyRetried=false;
-      try{alreadyRetried=sessionStorage.getItem('ECHA_LIFF_REAUTH')==='1';}catch(x){}
+      try{
+        alreadyRetried=sessionStorage.getItem('ECHA_LIFF_REAUTH')==='1';
+      }catch(x){}
 
       if(!alreadyRetried){
-        document.getElementById('user-name').innerText='กำลังต่ออายุการเข้าสู่ระบบ...';
+        document.getElementById('user-name').innerText='กำลังต่ออายุ LINE Session...';
         document.getElementById('user-status').innerText='กรุณารอสักครู่';
         setButtonsEnabled(false);
         restartLiffLogin_();
@@ -193,32 +232,6 @@ async function main(){
   }
 }
 
-function clockIn(actionType){
-  if(isSubmitting||!userProfile)return;
-  if(!navigator.geolocation){setResult('❌ อุปกรณ์นี้ไม่รองรับ GPS','error');return;}
-  setSubmitting(true);setResult('📍 กำลังตรวจสอบตำแหน่ง...','info');document.getElementById('gps-info').innerText='กำลังขอตำแหน่ง GPS จากอุปกรณ์...';
-  navigator.geolocation.getCurrentPosition(async p=>{
-    try{
-      const lat=p.coords.latitude,lng=p.coords.longitude,accuracy=Math.round(p.coords.accuracy||0);document.getElementById('gps-info').innerText=`GPS Accuracy: ±${accuracy} เมตร`;
-      if(accuracy>GPS_MAX_ACCURACY){setResult(`⚠️ GPS ยังไม่แม่นพอ (±${accuracy} เมตร)\nกรุณาลองใหม่`,'error');setSubmitting(false);return;}
-      const res=await fetch(GAS_WEB_APP_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({userId:userProfile.userId,displayName:userProfile.displayName,actionType,lat,lng})});
-      const text=await res.text();let data;try{data=JSON.parse(text);}catch(e){throw new Error('ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง');}
-      if(data.status!=='success')throw new Error(data.message||'ไม่สามารถบันทึกข้อมูลได้');
-      const lineStatus=data.lineNotification==='sent'?'📱 LINE แจ้งเตือนแล้ว':data.lineNotification==='error'?'⚠️ บันทึกเวลาแล้ว แต่ LINE แจ้งเตือนไม่สำเร็จ':'📱 บันทึกเวลาแล้ว';
-      if(data.isWithinArea==='อยู่ในพื้นที่')setResult(`✅ ${actionType}สำเร็จ!\nระยะจากร้าน ${data.distance} เมตร\n${lineStatus}`,'success');else setResult(`⚠️ บันทึกเวลาแล้ว แต่คุณอยู่นอกพื้นที่ร้าน\nระยะจากร้าน ${data.distance} เมตร`,'error');
-      setSubmitting(false);
-    }catch(e){setResult('❌ เกิดข้อผิดพลาดในการส่งข้อมูล\n'+e.message,'error');setSubmitting(false);}
-  },e=>{let m='❌ ไม่สามารถอ่านตำแหน่ง GPS ได้';if(e.code===1)m='❌ ไม่ได้รับอนุญาตให้ใช้ Location\nกรุณาเปิดสิทธิ์ Location ให้ LINE';else if(e.code===2)m='❌ ไม่พบตำแหน่ง GPS';else if(e.code===3)m='❌ GPS ใช้เวลานานเกินไป';setResult(m,'error');document.getElementById('gps-info').innerText='GPS ยังไม่พร้อม';setSubmitting(false);},{enableHighAccuracy:true,timeout:GPS_TIMEOUT,maximumAge:0});
-}
-
-function renderIncome(d){
-  const s=d.summary||{};const rows=d.rows||[];
-  let h=`<div class="grid grid-cols-2 gap-2">${card('เงินเดือน/ค่าแรง',s.base)}${card('OT',s.ot)}${card('วันหยุด',s.holiday)}${card('ค่าตำแหน่ง',s.position)}${card('Attendance Bonus',s.attendance)}${card('รายได้อื่น',s.otherEarning)}</div><div class="mt-3 p-4 rounded-2xl bg-slate-900 text-white"><div class="text-sm opacity-80">รายได้รวม</div><div class="text-2xl font-bold">${money(s.gross)}</div><div class="text-sm mt-2 opacity-80">หัก ${money(s.deduction)}</div><div class="text-sm mt-1">💰 รับสุทธิ <b>${money(s.net)}</b></div></div>`;
-  if(rows.length)h+=`<div class="mt-4 space-y-2">${rows.map(r=>`<div class="border rounded-2xl p-3 flex justify-between"><div><b>${esc(r.periodId)}</b><div class="text-xs text-gray-500">จ่าย ${esc(r.payDate)} · ${esc(r.status)}</div></div><b>${money(r.netPay)}</b></div>`).join('')}</div>`;
-  else h+='<div class="text-sm text-gray-400 mt-4">ยังไม่มี Payroll ของเดือนนี้</div>';
-  document.getElementById('income-content').innerHTML=h;
-}
-function card(label,val){return `<div class="border rounded-2xl p-3"><div class="text-xs text-gray-500">${label}</div><div class="font-bold mt-1">${money(val)}</div></div>`;}
 async function loadIncome(){if(!userProfile)return;try{const sel=document.getElementById('income-month');if(!sel.options.length){const now=new Date();for(let i=0;i<6;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const key=d.toISOString().slice(0,7);sel.add(new Option(key,key));}}const d=await api('GET_MY_INCOME',{month:sel.value||undefined});renderIncome(d);}catch(e){document.getElementById('income-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
 
 async function loadPayslips(){if(!userProfile)return;try{const rows=await api('GET_MY_PAYSLIPS');document.getElementById('payslip-list').innerHTML=rows.length?rows.map((r,i)=>`<button onclick='showPayslip(${JSON.stringify(r).replace(/</g,'\\u003c')})' class="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"><div class="flex justify-between"><b>📄 ${esc(r.periodId)}</b><b>${money(r.netPay)}</b></div><div class="text-xs text-gray-500 mt-1">วันที่จ่าย ${esc(r.payDate)} · ${esc(r.status)}</div></button>`).join(''):'<div class="text-sm text-gray-400">ยังไม่มีสลิปเงินเดือน</div>';}catch(e){document.getElementById('payslip-list').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
