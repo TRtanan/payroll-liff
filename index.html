@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff Attendance V4</title>
+  <title>E-CHA Staff Attendance V5</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -230,6 +230,125 @@ async function main(){
     document.getElementById('user-status').innerText=e.message||'กรุณาเปิดผ่าน LINE';
     setButtonsEnabled(false);
   }
+}
+
+function clockIn(actionType){
+  if(isSubmitting || !userProfile) return;
+
+  if(!navigator.geolocation){
+    setResult('❌ อุปกรณ์นี้ไม่รองรับ GPS','error');
+    return;
+  }
+
+  setSubmitting(true);
+  setResult('📍 กำลังตรวจสอบตำแหน่ง...','info');
+  document.getElementById('gps-info').innerText='กำลังขอตำแหน่ง GPS จากอุปกรณ์...';
+
+  navigator.geolocation.getCurrentPosition(async p=>{
+    try{
+      const lat=p.coords.latitude;
+      const lng=p.coords.longitude;
+      const accuracy=Math.round(p.coords.accuracy||0);
+
+      document.getElementById('gps-info').innerText=
+        `GPS Accuracy: ±${accuracy} เมตร`;
+
+      if(accuracy>GPS_MAX_ACCURACY){
+        setResult(
+          `⚠️ GPS ยังไม่แม่นพอ (±${accuracy} เมตร)\nกรุณาลองใหม่`,
+          'error'
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      /*
+        Attendance keeps the existing production contract:
+        userId + displayName + actionType + GPS.
+        This is intentionally separate from the read-only Staff API,
+        which uses a verified LIFF access token.
+      */
+      const res=await fetch(GAS_WEB_APP_URL,{
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({
+          userId:userProfile.userId,
+          displayName:userProfile.displayName,
+          actionType,
+          lat,
+          lng
+        })
+      });
+
+      const text=await res.text();
+      let data;
+
+      try{
+        data=JSON.parse(text);
+      }catch(e){
+        throw new Error(
+          'ระบบได้รับคำตอบจาก Google Apps Script ไม่ถูกต้อง'
+        );
+      }
+
+      if(data.status!=='success'){
+        throw new Error(
+          data.message||data.error||'ไม่สามารถบันทึกข้อมูลได้'
+        );
+      }
+
+      const lineStatus=
+        data.lineNotification==='sent'
+          ? '📱 LINE แจ้งเตือนแล้ว'
+          : data.lineNotification==='error'
+            ? '⚠️ บันทึกเวลาแล้ว แต่ LINE แจ้งเตือนไม่สำเร็จ'
+            : '📱 บันทึกเวลาแล้ว';
+
+      if(data.isWithinArea==='อยู่ในพื้นที่'){
+        setResult(
+          `✅ ${actionType}สำเร็จ!\n`+
+          `ระยะจากร้าน ${data.distance} เมตร\n`+
+          `${lineStatus}`,
+          'success'
+        );
+      }else{
+        setResult(
+          `⚠️ บันทึกเวลาแล้ว แต่คุณอยู่นอกพื้นที่ร้าน\n`+
+          `ระยะจากร้าน ${data.distance} เมตร`,
+          'error'
+        );
+      }
+
+    }catch(e){
+      setResult(
+        '❌ เกิดข้อผิดพลาดในการส่งข้อมูล\n'+
+        (e.message||String(e)),
+        'error'
+      );
+    }finally{
+      setSubmitting(false);
+    }
+
+  },e=>{
+    let m='❌ ไม่สามารถอ่านตำแหน่ง GPS ได้';
+
+    if(e.code===1){
+      m='❌ ไม่ได้รับอนุญาตให้ใช้ Location\nกรุณาเปิดสิทธิ์ Location ให้ LINE';
+    }else if(e.code===2){
+      m='❌ ไม่พบตำแหน่ง GPS';
+    }else if(e.code===3){
+      m='❌ GPS ใช้เวลานานเกินไป';
+    }
+
+    setResult(m,'error');
+    document.getElementById('gps-info').innerText='GPS ยังไม่พร้อม';
+    setSubmitting(false);
+
+  },{
+    enableHighAccuracy:true,
+    timeout:GPS_TIMEOUT,
+    maximumAge:0
+  });
 }
 
 async function loadIncome(){if(!userProfile)return;try{const sel=document.getElementById('income-month');if(!sel.options.length){const now=new Date();for(let i=0;i<6;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const key=d.toISOString().slice(0,7);sel.add(new Option(key,key));}}const d=await api('GET_MY_INCOME',{month:sel.value||undefined});renderIncome(d);}catch(e){document.getElementById('income-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
