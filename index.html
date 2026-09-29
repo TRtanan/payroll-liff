@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff V.8.2</title>
+  <title>E-CHA Staff V8.3</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -41,28 +41,26 @@
       </div>
       <div id="result-box" class="hidden p-3 rounded-xl text-sm font-medium mt-4 whitespace-pre-line"></div>
       <div id="gps-info" class="text-xs text-gray-400 mt-4">ระบบจะตรวจสอบ GPS เมื่อกดลงเวลา</div>
-    </section>
 
-    <div class="bg-white rounded-3xl shadow-xl p-5">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <div class="text-lg font-bold">📅 ตรวจสอบวันทำงาน</div>
-          <div class="text-xs text-gray-500 mt-1">ตรวจสอบเวลาเข้า-ออก, ชั่วโมง, OT และวันหยุด</div>
-        </div>
-        <button id="workdays-toggle" onclick="toggleWorkdays()" class="bg-slate-900 text-white font-bold px-3 py-2 rounded-xl text-sm">ตรวจสอบ</button>
-      </div>
-
-      <div id="workdays-panel" class="hidden mt-4">
-        <div class="flex items-center justify-between mb-4 gap-3">
-          <div class="flex-1">
-            <div class="text-sm font-bold">รอบเดือนปัจจุบัน</div>
-            <select id="workdays-period" onchange="loadWorkdays()" class="border rounded-xl px-3 py-2 text-sm mt-1 bg-white"></select>
+      <div class="border-t mt-5 pt-5">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-lg font-bold">📅 ตรวจสอบวันทำงาน</div>
+            <div class="text-xs text-gray-500 mt-1">ตรวจสอบเวลาเข้า-ออก, ชั่วโมง, OT และวันหยุด</div>
           </div>
+          <button id="workdays-toggle" onclick="toggleWorkdays()" class="bg-slate-900 text-white font-bold px-3 py-2 rounded-xl text-sm">ตรวจสอบ</button>
         </div>
-        <div id="workdays-summary" class="grid grid-cols-3 gap-2 mb-4"></div>
-        <div id="workdays-content"><div class="text-sm text-gray-400">กด “ตรวจสอบ” เพื่อโหลดข้อมูล</div></div>
+
+        <div id="workdays-panel" class="hidden mt-4">
+          <div class="bg-slate-100 rounded-2xl px-3 py-3 mb-4">
+            <div class="text-xs text-gray-500">รอบเดือนปัจจุบัน</div>
+            <div id="workdays-period-label" class="text-sm font-bold mt-1">กำลังตรวจสอบรอบ...</div>
+          </div>
+          <div id="workdays-summary" class="grid grid-cols-3 gap-2 mb-4"></div>
+          <div id="workdays-content"><div class="text-sm text-gray-400">กด “ตรวจสอบ” เพื่อโหลดข้อมูล</div></div>
+        </div>
       </div>
-    </div>
+    </section>
 
     <section id="page-income" class="hidden bg-white rounded-3xl shadow-xl p-5">
       <div class="flex items-center justify-between mb-4"><div><h1 class="text-xl font-bold">💰 รายได้</h1><p class="text-xs text-gray-500">รายได้ของฉันตาม Payroll</p></div><select id="income-month" onchange="loadIncome()" class="border rounded-xl px-2 py-2 text-sm"></select></div>
@@ -569,29 +567,9 @@ function getCurrentWorkdaysPeriod_(){
   return y+'-'+m+'-'+(day<=15?'A':'B');
 }
 
-function getWorkdaysPeriods_(){
-  const now=new Date();
-  const periods=[];
-  for(let i=0;i<3;i++){
-    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    const y=d.getFullYear();
-    const m=String(d.getMonth()+1).padStart(2,'0');
-    periods.push(y+'-'+m+'-A');
-    periods.push(y+'-'+m+'-B');
-  }
-  return periods;
-}
-
-function initWorkdaysPeriod_(){
-  const el=document.getElementById('workdays-period');
-  if(!el || el.options.length)return;
-  const current=getCurrentWorkdaysPeriod_();
-  getWorkdaysPeriods_().forEach(period=>{
-    const [ym,part]=period.split('-').reduce((a,v,i)=>{ if(i<2)a[0]+=(a[0]?'-':'')+v; else a[1]=v; return a;},['','']);
-    const opt=new Option(period+'  ('+(part==='A'?'วันที่ 1–15':'วันที่ 16–วันสุดท้าย')+')',period);
-    if(period===current)opt.selected=true;
-    el.add(opt);
-  });
+function getCurrentWorkdaysPeriodLabel_(){
+  const period=getCurrentWorkdaysPeriod_();
+  return period+' ('+(period.endsWith('-A')?'วันที่ 1–15':'วันที่ 16–วันสุดท้าย')+')';
 }
 
 function toggleWorkdays(){
@@ -600,14 +578,14 @@ function toggleWorkdays(){
   if(!panel)return;
   const open=panel.classList.toggle('hidden')===false;
   if(btn)btn.innerText=open?'ซ่อน':'ตรวจสอบ';
-  if(open){initWorkdaysPeriod_();loadWorkdays();}
+  if(open)loadWorkdays();
 }
 
 function loadWorkdays(){
   if(!userProfile)return;
-  initWorkdaysPeriod_();
-  const el=document.getElementById('workdays-period');
-  const period=el&&el.value?el.value:getCurrentWorkdaysPeriod_();
+  const period=getCurrentWorkdaysPeriod_();
+  const label=document.getElementById('workdays-period-label');
+  if(label)label.innerText=getCurrentWorkdaysPeriodLabel_();
 
   const cached=cacheGet_(staffCache.workdays,period);
   if(cached){renderWorkdays_(cached);return;}
@@ -620,7 +598,7 @@ function loadWorkdays(){
   }
 
   document.getElementById('workdays-content').innerHTML='<div class="text-sm text-gray-400">กำลังตรวจสอบวันทำงาน...</div>';
-  api('GET_MY_WORKDAYS',{month:period}).then(d=>{
+  api('GET_MY_WORKDAYS',{}).then(d=>{
     cacheSet_(staffCache.workdays,period,d);
     persistentSet_('workdays_'+period,d);
     renderWorkdays_(d);
@@ -631,23 +609,22 @@ function loadWorkdays(){
 
 function renderWorkdays_(d){
   const summary=d&&d.summary?d.summary:{};
-  const period=d&&d.periodId?d.periodId:(d&&d.month?d.month:getCurrentWorkdaysPeriod_());
-  const periodEl=document.getElementById('workdays-period');
-  if(periodEl && periodEl.value!==period) periodEl.value=period;
+  const label=document.getElementById('workdays-period-label');
+  if(label)label.innerText=d&&d.periodLabel?d.periodLabel:getCurrentWorkdaysPeriodLabel_();
 
   document.getElementById('workdays-summary').innerHTML=`
-    <div class="summary-card text-center"><div class="text-xs text-gray-500">ชั่วโมงทำงาน</div><div class="text-lg font-bold mt-1">${Number(summary.totalHours||0).toFixed(2)}</div><div class="text-[10px] text-gray-400">ชม.</div></div>
+    <div class="summary-card text-center"><div class="text-xs text-gray-500">วันทำงานทั้งหมด</div><div class="text-lg font-bold mt-1">${Number(summary.workedDays||0)}</div><div class="text-[10px] text-gray-400">วัน</div></div>
     <div class="summary-card text-center"><div class="text-xs text-gray-500">OT ชั่วโมง</div><div class="text-lg font-bold mt-1">${Number(summary.totalOTHours||0).toFixed(2)}</div><div class="text-[10px] text-gray-400">ชม.</div></div>
-    <div class="summary-card text-center"><div class="text-xs text-gray-500">OT + วันหยุด</div><div class="text-lg font-bold mt-1">${money(Number(summary.totalOTPay||0)+Number(summary.totalHolidayPay||0))}</div><div class="text-[10px] text-gray-400">บาท</div></div>`;
+    <div class="summary-card text-center"><div class="text-xs text-gray-500">วันหยุดคงเหลือ</div><div class="text-lg font-bold mt-1">${Number(summary.holidayRemaining||0)}</div><div class="text-[10px] text-gray-400">วัน</div></div>`;
 
   const rows=Array.isArray(d&&d.rows)?d.rows:[];
   if(!rows.length){
-    document.getElementById('workdays-content').innerHTML='<div class="border rounded-2xl p-5 text-center text-sm text-gray-400">ไม่พบข้อมูลวันทำงานในเดือนนี้</div>';
+    document.getElementById('workdays-content').innerHTML='<div class="border rounded-2xl p-5 text-center text-sm text-gray-400">ไม่พบข้อมูลวันทำงานในรอบนี้</div>';
     return;
   }
 
   document.getElementById('workdays-content').innerHTML=`
-    <div class="text-xs text-gray-500 mb-2">${Number(summary.workedDays||0)} วันทำงาน · เลื่อนตารางซ้าย–ขวาได้</div>
+    <div class="text-xs text-gray-500 mb-2">${rows.length} วันทำงาน · เลื่อนตารางซ้าย–ขวาได้</div>
     <div class="overflow-x-auto border rounded-2xl">
       <table class="workdays-table">
         <thead><tr>
