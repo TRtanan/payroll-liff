@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff Attendance V5</title>
+  <title>E-CHA Staff Attendance V6</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -349,6 +349,88 @@ function clockIn(actionType){
     timeout:GPS_TIMEOUT,
     maximumAge:0
   });
+}
+
+
+function renderIncome(d){
+  const box=document.getElementById('income-content');
+  if(!box)return;
+
+  const s=d&&d.summary?d.summary:{};
+  const rows=Array.isArray(d&&d.rows)?d.rows:[];
+
+  const card=(label,value,cls='')=>`
+    <div class="border rounded-2xl p-3 bg-white">
+      <div class="text-xs text-gray-500">${label}</div>
+      <div class="font-bold text-lg ${cls}">${money(value)}</div>
+    </div>`;
+
+  if(!rows.length){
+    box.innerHTML=`
+      <div class="border rounded-2xl p-5 text-center">
+        <div class="text-4xl mb-2">💰</div>
+        <div class="font-bold">ยังไม่มีข้อมูลรายได้</div>
+        <div class="text-sm text-gray-400 mt-1">
+          ไม่พบ Payroll ของเดือน ${esc(d&&d.month?d.month:'')}
+        </div>
+      </div>`;
+    return;
+  }
+
+  box.innerHTML=`
+    <div class="grid grid-cols-2 gap-3">
+      ${card('เงินเดือน / ค่าแรง',s.base)}
+      ${card('OT',s.ot)}
+      ${card('วันหยุด',s.holiday)}
+      ${card('ค่าตำแหน่ง',s.position)}
+      ${card('Attendance Bonus',s.attendance)}
+      ${card('Incentive',s.incentive)}
+      ${card('รายได้อื่น',s.otherEarning)}
+      ${card('หัก',s.deduction,'text-rose-600')}
+    </div>
+
+    <div class="rounded-3xl bg-slate-900 text-white p-5 mt-3">
+      <div class="text-sm opacity-70">รายได้รวมก่อนหัก</div>
+      <div class="text-2xl font-bold mt-1">${money(s.gross)}</div>
+      <div class="border-t border-white/20 my-3"></div>
+      <div class="flex justify-between items-center">
+        <span class="font-semibold">รับสุทธิ</span>
+        <span class="text-3xl font-bold">${money(s.net)}</span>
+      </div>
+    </div>
+
+    <div class="mt-4 space-y-2">
+      <div class="font-bold text-sm">รายละเอียด Payroll</div>
+      ${rows.map(r=>`
+        <div class="border rounded-2xl p-4 bg-white">
+          <div class="flex justify-between gap-3">
+            <div>
+              <div class="font-bold">${esc(r.periodId||'-')}</div>
+              <div class="text-xs text-gray-500 mt-1">
+                วันที่จ่าย ${esc(r.payDate||'-')} · ${esc(r.type||'-')}
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="font-bold">${money(r.netPay)}</div>
+              <div class="text-xs text-gray-500">${esc(r.status||'-')}</div>
+            </div>
+          </div>
+
+          <div class="border-t my-3"></div>
+
+          <div class="grid grid-cols-2 gap-y-2 text-sm">
+            ${line('เงินเดือน/ค่าแรง',money(r.basePay))}
+            ${line('OT',money(r.otPay))}
+            ${line('วันหยุด',money(r.holidayPay))}
+            ${line('ค่าตำแหน่ง',money(r.positionAllowance))}
+            ${line('Attendance Bonus',money(r.attendanceBonus))}
+            ${line('Incentive',money(r.incentive))}
+            ${line('รายได้อื่น',money(r.otherEarning))}
+            ${line('หัก',money(r.deduction))}
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
 }
 
 async function loadIncome(){if(!userProfile)return;try{const sel=document.getElementById('income-month');if(!sel.options.length){const now=new Date();for(let i=0;i<6;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const key=d.toISOString().slice(0,7);sel.add(new Option(key,key));}}const d=await api('GET_MY_INCOME',{month:sel.value||undefined});renderIncome(d);}catch(e){document.getElementById('income-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;}}
