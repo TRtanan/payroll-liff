@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-CHA Staff V.8.1</title>
+  <title>E-CHA Staff V.8.2</title>
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -54,11 +54,13 @@
 
       <div id="workdays-panel" class="hidden mt-4">
         <div class="flex items-center justify-between mb-4 gap-3">
-          <div class="text-sm font-bold">ข้อมูลวันทำงาน</div>
-          <select id="workdays-month" onchange="loadWorkdays()" class="border rounded-xl px-2 py-2 text-sm"></select>
+          <div class="flex-1">
+            <div class="text-sm font-bold">รอบเดือนปัจจุบัน</div>
+            <select id="workdays-period" onchange="loadWorkdays()" class="border rounded-xl px-3 py-2 text-sm mt-1 bg-white"></select>
+          </div>
         </div>
-        <div id="workdays-summary" class="grid grid-cols-2 gap-3 mb-4"></div>
-        <div id="workdays-content"><div class="text-sm text-gray-400">กำลังโหลด...</div></div>
+        <div id="workdays-summary" class="grid grid-cols-3 gap-2 mb-4"></div>
+        <div id="workdays-content"><div class="text-sm text-gray-400">กด “ตรวจสอบ” เพื่อโหลดข้อมูล</div></div>
       </div>
     </div>
 
@@ -559,34 +561,69 @@ function renderIncentive_(d){
     `<div class="p-5 rounded-3xl bg-slate-900 text-white"><div class="text-sm opacity-80">ยอดโบนัสที่ยังไม่จ่าย</div><div class="text-3xl font-bold mt-1">${money(d.balance)}</div><div class="text-xs mt-2 opacity-70">ได้รับสะสมทั้งปี ${money(d.totalEarned)} · จ่ายแล้ว ${money(d.paid)}</div></div><div class="space-y-2 mt-4">${d.rows.length?d.rows.map(x=>`<div class="border rounded-2xl p-3 flex justify-between"><div><b>${esc(x.description||'Incentive')}</b><div class="text-xs text-gray-500">${esc(x.date)} · ${esc(x.status)}</div></div><b>${money(x.amount)}</b></div>`).join(''):'<div class="text-sm text-gray-400">ยังไม่มีรายการโบนัสสะสม</div>'}</div>`;
 }
 
+function getCurrentWorkdaysPeriod_(){
+  const now=new Date();
+  const y=now.getFullYear();
+  const m=String(now.getMonth()+1).padStart(2,'0');
+  const day=now.getDate();
+  return y+'-'+m+'-'+(day<=15?'A':'B');
+}
+
+function getWorkdaysPeriods_(){
+  const now=new Date();
+  const periods=[];
+  for(let i=0;i<3;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    const y=d.getFullYear();
+    const m=String(d.getMonth()+1).padStart(2,'0');
+    periods.push(y+'-'+m+'-A');
+    periods.push(y+'-'+m+'-B');
+  }
+  return periods;
+}
+
+function initWorkdaysPeriod_(){
+  const el=document.getElementById('workdays-period');
+  if(!el || el.options.length)return;
+  const current=getCurrentWorkdaysPeriod_();
+  getWorkdaysPeriods_().forEach(period=>{
+    const [ym,part]=period.split('-').reduce((a,v,i)=>{ if(i<2)a[0]+=(a[0]?'-':'')+v; else a[1]=v; return a;},['','']);
+    const opt=new Option(period+'  ('+(part==='A'?'วันที่ 1–15':'วันที่ 16–วันสุดท้าย')+')',period);
+    if(period===current)opt.selected=true;
+    el.add(opt);
+  });
+}
+
 function toggleWorkdays(){
   const panel=document.getElementById('workdays-panel');
   const btn=document.getElementById('workdays-toggle');
   if(!panel)return;
   const open=panel.classList.toggle('hidden')===false;
   if(btn)btn.innerText=open?'ซ่อน':'ตรวจสอบ';
-  if(open)loadWorkdays();
+  if(open){initWorkdaysPeriod_();loadWorkdays();}
 }
 
 function loadWorkdays(){
   if(!userProfile)return;
-  const sel=document.getElementById('workdays-month');
-  if(!sel.options.length){
-    const now=new Date();
-    for(let i=0;i<6;i++){
-      const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-      const key=d.toISOString().slice(0,7);
-      sel.add(new Option(key,key));
-    }
-  }
-  const month=sel.value||'';
-  const cached=cacheGet_(staffCache.workdays,month);
+  initWorkdaysPeriod_();
+  const el=document.getElementById('workdays-period');
+  const period=el&&el.value?el.value:getCurrentWorkdaysPeriod_();
+
+  const cached=cacheGet_(staffCache.workdays,period);
   if(cached){renderWorkdays_(cached);return;}
-  const stored=persistentGet_('workdays_'+month);
-  if(stored){cacheSet_(staffCache.workdays,month,stored);renderWorkdays_(stored);return;}
+
+  const stored=persistentGet_('workdays_'+period);
+  if(stored){
+    cacheSet_(staffCache.workdays,period,stored);
+    renderWorkdays_(stored);
+    return;
+  }
+
   document.getElementById('workdays-content').innerHTML='<div class="text-sm text-gray-400">กำลังตรวจสอบวันทำงาน...</div>';
-  api('GET_MY_WORKDAYS',{month:month}).then(d=>{
-    cacheSet_(staffCache.workdays,month,d);persistentSet_('workdays_'+month,d);renderWorkdays_(d);
+  api('GET_MY_WORKDAYS',{month:period}).then(d=>{
+    cacheSet_(staffCache.workdays,period,d);
+    persistentSet_('workdays_'+period,d);
+    renderWorkdays_(d);
   }).catch(e=>{
     document.getElementById('workdays-content').innerHTML=`<div class="text-rose-600">❌ ${esc(e.message)}</div>`;
   });
@@ -594,25 +631,30 @@ function loadWorkdays(){
 
 function renderWorkdays_(d){
   const summary=d&&d.summary?d.summary:{};
+  const period=d&&d.periodId?d.periodId:(d&&d.month?d.month:getCurrentWorkdaysPeriod_());
+  const periodEl=document.getElementById('workdays-period');
+  if(periodEl && periodEl.value!==period) periodEl.value=period;
+
   document.getElementById('workdays-summary').innerHTML=`
-    <div class="summary-card"><div class="text-xs text-gray-500">วันทำงาน</div><div class="text-xl font-bold">${Number(summary.workedDays||0)} วัน</div></div>
-    <div class="summary-card"><div class="text-xs text-gray-500">ชั่วโมงทำงาน</div><div class="text-xl font-bold">${Number(summary.totalHours||0).toFixed(2)} ชม.</div></div>
-    <div class="summary-card"><div class="text-xs text-gray-500">OT</div><div class="text-xl font-bold">${Number(summary.totalOTHours||0).toFixed(2)} ชม.</div></div>
-    <div class="summary-card"><div class="text-xs text-gray-500">OT + วันหยุด</div><div class="text-xl font-bold">${money(Number(summary.totalOTPay||0)+Number(summary.totalHolidayPay||0))}</div></div>`;
+    <div class="summary-card text-center"><div class="text-xs text-gray-500">ชั่วโมงทำงาน</div><div class="text-lg font-bold mt-1">${Number(summary.totalHours||0).toFixed(2)}</div><div class="text-[10px] text-gray-400">ชม.</div></div>
+    <div class="summary-card text-center"><div class="text-xs text-gray-500">OT ชั่วโมง</div><div class="text-lg font-bold mt-1">${Number(summary.totalOTHours||0).toFixed(2)}</div><div class="text-[10px] text-gray-400">ชม.</div></div>
+    <div class="summary-card text-center"><div class="text-xs text-gray-500">OT + วันหยุด</div><div class="text-lg font-bold mt-1">${money(Number(summary.totalOTPay||0)+Number(summary.totalHolidayPay||0))}</div><div class="text-[10px] text-gray-400">บาท</div></div>`;
 
   const rows=Array.isArray(d&&d.rows)?d.rows:[];
   if(!rows.length){
     document.getElementById('workdays-content').innerHTML='<div class="border rounded-2xl p-5 text-center text-sm text-gray-400">ไม่พบข้อมูลวันทำงานในเดือนนี้</div>';
     return;
   }
+
   document.getElementById('workdays-content').innerHTML=`
+    <div class="text-xs text-gray-500 mb-2">${Number(summary.workedDays||0)} วันทำงาน · เลื่อนตารางซ้าย–ขวาได้</div>
     <div class="overflow-x-auto border rounded-2xl">
       <table class="workdays-table">
         <thead><tr>
-          <th>Date</th><th>Employee_ID</th><th>Name</th><th>Type</th><th>Check_In</th><th>Check_Out</th><th>Hours</th><th>Base_Pay</th><th>OT_Hours</th><th>OT_Pay</th><th>Holiday_Pay</th><th>Status</th>
+          <th>Date</th><th>Check_In</th><th>Check_Out</th><th>Hours</th><th>Base_Pay</th><th>OT_Hours</th><th>OT_Pay</th><th>Holiday_Pay</th><th>Status</th>
         </tr></thead>
         <tbody>${rows.map(r=>`<tr>
-          <td>${esc(r.date)}</td><td>${esc(r.employeeId)}</td><td>${esc(r.name)}</td><td>${esc(r.type)}</td>
+          <td>${esc(r.date)}</td>
           <td>${esc(r.checkIn||'-')}</td><td>${esc(r.checkOut||'-')}</td><td>${Number(r.hours||0).toFixed(2)}</td><td>${money(r.basePay)}</td>
           <td>${Number(r.otHours||0).toFixed(2)}</td><td>${money(r.otPay)}</td><td>${money(r.holidayPay)}</td><td class="status">${esc(r.status||'-')}</td>
         </tr>`).join('')}</tbody>
